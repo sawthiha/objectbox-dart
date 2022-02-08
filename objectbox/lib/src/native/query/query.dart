@@ -8,18 +8,23 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
+import 'package:objectbox/objectbox.dart';
 
 import '../../common.dart';
 import '../../modelinfo/entity_definition.dart';
+import '../../modelinfo/model_definition.dart';
 import '../../modelinfo/modelproperty.dart';
 import '../../modelinfo/modelrelation.dart';
 import '../../store.dart';
 import '../bindings/bindings.dart';
 import '../bindings/data_visitor.dart';
 import '../bindings/helpers.dart';
+import '../transaction.dart';
 
 part 'builder.dart';
+
 part 'params.dart';
+
 part 'property.dart';
 
 // ignore_for_file: public_member_api_docs
@@ -919,7 +924,11 @@ class Query<T> {
 
   Future<Stream<T>> _streamIsolate() async {
     final port = ReceivePort();
-    final isolateInit = _StreamIsolateInit(port.sendPort, _ptr.address);
+    final isolateInit = _StreamIsolateInit(
+        port.sendPort,
+        InternalStoreAccess.modelDefinition(_store),
+        _store.reference,
+        _ptr.address);
     await Isolate.spawn(_queryAndVisit, isolateInit);
 
     SendPort? sendPort;
@@ -984,39 +993,44 @@ class Query<T> {
   static Future<void> _queryAndVisit(_StreamIsolateInit isolateInit) async {
     var sendPort = isolateInit.sendPort;
 
-    // FIXME How to listen to exit command while in visitor loop?
-    //  Need to somehow pause visitor loop and process stream messages.
-
     // Send a SendPort to the main isolate so that it can send to this isolate.
     final commandPort = ReceivePort();
     sendPort.send(commandPort.sendPort);
 
-    // FIXME Query might have already been closed and the pointer is invalid.
-    final queryPtr =
-        Pointer<OBX_query>.fromAddress(isolateInit.queryPtrAddress);
+    final store =
+        Store.fromReference(isolateInit.model, isolateInit.storeReference);
+    // Visit inside transaction and do not complete transaction to ensure
+    // data pointers remain valid until main isolate has deserialized all data.
+    await InternalStoreAccess.runInTransaction(store, TxMode.read,
+        (Transaction tx) async {
+      // FIXME Query might have already been closed and the pointer is invalid.
+      final queryPtr =
+          Pointer<OBX_query>.fromAddress(isolateInit.queryPtrAddress);
 
-    // TODO Wrap in transaction to ensure object data pointers are
-    //  valid until main isolate has deserialized everything/confirmed close.
-    // FIXME Creating a transaction requires Store, but then can't re-use query pointer!
+      final visitor = dataVisitor((Pointer<Uint8> data, int size) {
+        // FIXME Return false here to stop visitor on exit command,
+        //  How to listen to exit command while in visitor loop?
+        sendPort.send(_ObxObjectMessage(data.address, size));
+        return true;
+      });
+      try {
+        checkObx(C.query_visit(queryPtr, visitor, nullptr));
+      } on Exception catch (e) {
+        // FIXME Catch ObjectBoxException and ObjectBoxNativeError specifically?
+        //   Or throw in here?
+        sendPort.send(e.toString());
+        return;
+      }
 
-    final visitor = dataVisitor((Pointer<Uint8> data, int size) {
-      // FIXME Return false here to stop visitor on exit command.
-      sendPort.send(_ObxObjectMessage(data.address, size));
-      return true;
+      // Signal to the main isolate there are no more results.
+      sendPort.send(null);
+      // Wait for main isolate to confirm it is done accessing sent data pointers.
+      await commandPort.first;
+      // Note: when the transaction is closed after await this might lead to an
+      // error log as the isolate could have been transferred to another thread
+      // when resuming execution.
+      // https://github.com/dart-lang/sdk/issues/46943
     });
-    try {
-      checkObx(C.query_visit(queryPtr, visitor, nullptr));
-    } on Exception catch (e) {
-      // FIXME Catch ObjectBoxException and ObjectBoxNativeError specifically?
-      //   Or would it be fine to throw in here?
-      sendPort.send(e.toString());
-      return;
-    }
-
-    // Signal to the main isolate there are no more results.
-    sendPort.send(null);
-    // Wait for main isolate to confirm close.
-    await commandPort.first;
 
     // Only available on Dart 2.15+
     // Isolate.exit();
@@ -1059,9 +1073,12 @@ class Query<T> {
 @immutable
 class _StreamIsolateInit {
   final SendPort sendPort;
+  final ModelDefinition model;
+  final ByteData storeReference;
   final int queryPtrAddress;
 
-  const _StreamIsolateInit(this.sendPort, this.queryPtrAddress);
+  const _StreamIsolateInit(
+      this.sendPort, this.model, this.storeReference, this.queryPtrAddress);
 }
 
 /// Message sent to main isolate containing info about one object.
