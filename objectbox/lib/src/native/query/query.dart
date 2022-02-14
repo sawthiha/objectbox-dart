@@ -961,11 +961,14 @@ class Query<T> {
         // - null when there is no more data.
         else if (message is _StreamIsolateMessage) {
           try {
-            streamController.add(_entity.objectFromFB(
-                _store,
-                InternalStoreAccess.reader(_store).access(
-                    Pointer.fromAddress(message.dataPtrAddress),
-                    message.size)));
+            for (var i = 0; i < message.dataPtrAddresses.length; i++) {
+              final dataPtrAddress = message.dataPtrAddresses[i];
+              final size = message.sizes[i];
+              streamController.add(_entity.objectFromFB(
+                  _store,
+                  InternalStoreAccess.reader(_store)
+                      .access(Pointer.fromAddress(dataPtrAddress), size)));
+            }
             return; // wait for next message.
           } catch (e) {
             streamController.addError(e);
@@ -1007,10 +1010,19 @@ class Query<T> {
       final queryPtr =
           Pointer<OBX_query>.fromAddress(isolateInit.queryPtrAddress);
 
+      var dataPtrBatch = <int>[];
+      var sizeBatch = <int>[];
       final visitor = dataVisitor((Pointer<Uint8> data, int size) {
         // FIXME Return false here to stop visitor on exit command,
         //  How to listen to exit command while in visitor loop?
-        sendPort.send(_StreamIsolateMessage(data.address, size));
+        dataPtrBatch.add(data.address);
+        sizeBatch.add(size);
+        // Send data in batches as sending a message is rather expensive.
+        if (dataPtrBatch.length == 10) {
+          sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
+          dataPtrBatch = [];
+          sizeBatch = [];
+        }
         return true;
       });
       try {
@@ -1020,6 +1032,10 @@ class Query<T> {
         //   Or throw in here?
         sendPort.send(e.toString());
         return;
+      }
+      // Send any remaining data.
+      if (dataPtrBatch.isNotEmpty) {
+        sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
       }
 
       // Signal to the main isolate there are no more results.
@@ -1084,8 +1100,8 @@ class _StreamIsolateInit {
 /// Message sent to main isolate containing info about a batch of objects.
 @immutable
 class _StreamIsolateMessage {
-  final int dataPtrAddress;
-  final int size;
+  final List<int> dataPtrAddresses;
+  final List<int> sizes;
 
-  const _StreamIsolateMessage(this.dataPtrAddress, this.size);
+  const _StreamIsolateMessage(this.dataPtrAddresses, this.sizes);
 }
