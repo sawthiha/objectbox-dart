@@ -959,7 +959,7 @@ class Query<T> {
         // - ObxObjectMessage for data,
         // - String for errors and
         // - null when there is no more data.
-        else if (message is _ObxObjectMessage) {
+        else if (message is _StreamIsolateMessage) {
           try {
             streamController.add(_entity.objectFromFB(
                 _store,
@@ -1010,7 +1010,7 @@ class Query<T> {
       final visitor = dataVisitor((Pointer<Uint8> data, int size) {
         // FIXME Return false here to stop visitor on exit command,
         //  How to listen to exit command while in visitor loop?
-        sendPort.send(_ObxObjectMessage(data.address, size));
+        sendPort.send(_StreamIsolateMessage(data.address, size));
         return true;
       });
       try {
@@ -1069,7 +1069,7 @@ class Query<T> {
   }
 }
 
-/// Message passed to entry point function of isolate.
+/// Message passed to entry point [Query._queryAndVisit] of isolate.
 @immutable
 class _StreamIsolateInit {
   final SendPort sendPort;
@@ -1081,11 +1081,11 @@ class _StreamIsolateInit {
       this.sendPort, this.model, this.storeReference, this.queryPtrAddress);
 }
 
-/// Message sent to main isolate containing info about one object.
+/// Message sent to main isolate containing info about a batch of objects.
 @immutable
-class _ObxObjectMessage {
+class _StreamIsolateMessage {
   final int dataPtrAddress;
   final int size;
 
-  const _ObxObjectMessage(this.dataPtrAddress, this.size);
+  const _StreamIsolateMessage(this.dataPtrAddress, this.size);
 }
