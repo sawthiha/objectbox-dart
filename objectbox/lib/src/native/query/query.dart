@@ -821,8 +821,8 @@ class Query<T> {
 
   /// Finds Objects matching the query, streaming them while the query executes.
   ///
-  /// Note: make sure you evaluate performance in your use case - streams come
-  /// with an overhead so a plain [find()] is usually faster.
+  /// Results are streamed from a worker isolate in batches (the stream still
+  /// returns objects one by one).
   Future<Stream<T>> streamIsolate() => _streamIsolate();
 
   /// Stream items by sending full flatbuffers binary as a message.
@@ -924,11 +924,15 @@ class Query<T> {
 
   Future<Stream<T>> _streamIsolate() async {
     final port = ReceivePort();
+    // Current batch size determined through testing, performs well for smaller
+    // objects. Might want to expose in the future for performance tuning by
+    // users.
     final isolateInit = _StreamIsolateInit(
         port.sendPort,
         InternalStoreAccess.modelDefinition(_store),
         _store.reference,
-        _ptr.address);
+        _ptr.address,
+        20);
     await Isolate.spawn(_queryAndVisit, isolateInit);
 
     SendPort? sendPort;
@@ -1018,7 +1022,7 @@ class Query<T> {
         dataPtrBatch.add(data.address);
         sizeBatch.add(size);
         // Send data in batches as sending a message is rather expensive.
-        if (dataPtrBatch.length == 10) {
+        if (dataPtrBatch.length == isolateInit.batchSize) {
           sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
           dataPtrBatch = [];
           sizeBatch = [];
@@ -1092,9 +1096,10 @@ class _StreamIsolateInit {
   final ModelDefinition model;
   final ByteData storeReference;
   final int queryPtrAddress;
+  final int batchSize;
 
-  const _StreamIsolateInit(
-      this.sendPort, this.model, this.storeReference, this.queryPtrAddress);
+  const _StreamIsolateInit(this.sendPort, this.model, this.storeReference,
+      this.queryPtrAddress, this.batchSize);
 }
 
 /// Message sent to main isolate containing info about a batch of objects.
