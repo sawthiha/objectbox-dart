@@ -968,6 +968,7 @@ class Query<T> {
             for (var i = 0; i < message.dataPtrAddresses.length; i++) {
               final dataPtrAddress = message.dataPtrAddresses[i];
               final size = message.sizes[i];
+              if (size == 0) break; // Reached last object.
               streamController.add(_entity.objectFromFB(
                   _store,
                   InternalStoreAccess.reader(_store)
@@ -1014,18 +1015,24 @@ class Query<T> {
       final queryPtr =
           Pointer<OBX_query>.fromAddress(isolateInit.queryPtrAddress);
 
-      var dataPtrBatch = <int>[];
-      var sizeBatch = <int>[];
+      // Use fixed-length lists to avoid performance hit due to growing.
+      final maxBatchSize = isolateInit.batchSize;
+      var dataPtrBatch = List<int>.filled(maxBatchSize, 0);
+      var sizeBatch = List<int>.filled(maxBatchSize, 0);
+      var batchSize = 0;
       final visitor = dataVisitor((Pointer<Uint8> data, int size) {
         // FIXME Return false here to stop visitor on exit command,
         //  How to listen to exit command while in visitor loop?
-        dataPtrBatch.add(data.address);
-        sizeBatch.add(size);
+        dataPtrBatch[batchSize] = data.address;
+        sizeBatch[batchSize] = size;
+        batchSize++;
         // Send data in batches as sending a message is rather expensive.
-        if (dataPtrBatch.length == isolateInit.batchSize) {
+        if (batchSize == maxBatchSize) {
           sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
-          dataPtrBatch = [];
-          sizeBatch = [];
+          // Re-use list instance to avoid performance hit due to new instance.
+          dataPtrBatch.fillRange(0, dataPtrBatch.length, 0);
+          sizeBatch.fillRange(0, dataPtrBatch.length, 0);
+          batchSize = 0;
         }
         return true;
       });
@@ -1038,7 +1045,7 @@ class Query<T> {
         return;
       }
       // Send any remaining data.
-      if (dataPtrBatch.isNotEmpty) {
+      if (batchSize > 0) {
         sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
       }
 
