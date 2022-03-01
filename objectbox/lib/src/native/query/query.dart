@@ -8,17 +8,16 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:meta/meta.dart';
-import 'package:objectbox/objectbox.dart';
 
 import '../../common.dart';
 import '../../modelinfo/entity_definition.dart';
 import '../../modelinfo/modelproperty.dart';
 import '../../modelinfo/modelrelation.dart';
 import '../../store.dart';
+import '../../transaction.dart';
 import '../bindings/bindings.dart';
 import '../bindings/data_visitor.dart';
 import '../bindings/helpers.dart';
-import '../transaction.dart';
 
 part 'builder.dart';
 
