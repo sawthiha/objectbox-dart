@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:collection/collection.dart';
 import 'package:test/test.dart';
 
@@ -681,7 +679,7 @@ void main() {
 
     final foundIds = query.findIds();
     final stream =
-        useIsolateStream ? await query.streamIsolate() : query.stream();
+        useIsolateStream ? await query.streamAsync() : query.stream();
     final streamed = await stream.toList();
     expect(streamed.length, countMatching);
     final streamedIds = streamed.map((e) => e.id).toList(growable: false);
@@ -694,7 +692,7 @@ void main() {
 
     final start = DateTime.now();
     final subStream =
-        useIsolateStream ? await query.streamIsolate() : query.stream();
+        useIsolateStream ? await query.streamAsync() : query.stream();
     final subscription = subStream.listen(streamListenedItems.add);
     for (int i = 0; i < 10 && streamListenedItems.isEmpty; i++) {
       await Future<void>.delayed(Duration(milliseconds: i));

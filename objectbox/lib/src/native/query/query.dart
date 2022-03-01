@@ -829,7 +829,10 @@ class Query<T> {
   ///
   /// Results are streamed from a worker isolate in batches (the stream still
   /// returns objects one by one).
-  Future<Stream<T>> streamIsolate() => _streamIsolate();
+  ///
+  /// This is typically faster than [stream()] and even [find()].
+  @experimental
+  Future<Stream<T>> streamAsync() => _streamIsolate();
 
   /// Stream items by sending full flatbuffers binary as a message.
   Stream<T> _stream1() {
@@ -1026,8 +1029,9 @@ class Query<T> {
       var sizeBatch = List<int>.filled(maxBatchSize, 0);
       var batchSize = 0;
       final visitor = dataVisitor((Pointer<Uint8> data, int size) {
-        // FIXME Return false here to stop visitor on exit command,
-        //  How to listen to exit command while in visitor loop?
+        // Currently returning all results, even if the stream has been closed
+        // before (e.g. only first element taken). Would need a way to check
+        // for exit command on commandPort synchronously.
         dataPtrBatch[batchSize] = data.address;
         sizeBatch[batchSize] = size;
         batchSize++;

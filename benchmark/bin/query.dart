@@ -71,7 +71,7 @@ class QueryStreamIsolate extends QueryBenchmark {
 
   @override
   Future<void> run() async {
-    var stream = await query.streamIsolate();
+    var stream = await query.streamAsync();
     await stream.toList();
   }
 }
