@@ -940,7 +940,7 @@ class Query<T> {
     // Callback to exit the isolate once consumers or this close the stream
     // (potentially before all results have been streamed).
     var isolateExitSent = false;
-    final signalIsolateExit = () {
+    signalIsolateExit() {
       if (isolateExitSent) return;
       isolateExitSent = true;
       // Send signal to isolate it should exit.
@@ -948,7 +948,7 @@ class Query<T> {
       port.close();
       // Query has finalizer attached, prevent GC until here.
       reachabilityFence(this);
-    };
+    }
 
     try {
       final streamController = StreamController<T>(onCancel: signalIsolateExit);
