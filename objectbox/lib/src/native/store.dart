@@ -241,7 +241,9 @@ class Store {
           ptrAddress, 'ptrAddress', 'Given native pointer address is invalid');
     }
     _cStore = Pointer<OBX_store>.fromAddress(ptrAddress);
-    _attachFinalizer();
+    // FIXME
+    // _attachFinalizer();
+    _cFinalizer = nullptr;
   }
 
   /// Attach to a store opened in the [directoryPath]
