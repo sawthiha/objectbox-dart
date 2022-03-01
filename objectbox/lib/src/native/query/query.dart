@@ -931,7 +931,8 @@ class Query<T> {
   // }
 
   Future<Stream<T>> _streamIsolate() async {
-    final port = ReceivePort();
+    final resultPort = ReceivePort();
+    final exitPort = ReceivePort();
 
     // Pass clones of Store and Query to avoid these getting closed while the
     // worker isolate is still running. The isolate closes the clones once done.
@@ -941,8 +942,8 @@ class Query<T> {
     // Current batch size determined through testing, performs well for smaller
     // objects. Might want to expose in the future for performance tuning by
     // users.
-    final isolateInit = _StreamIsolateInit(
-        port.sendPort, storeClonePtr.address, queryClonePtr.address, 20);
+    final isolateInit = _StreamIsolateInit(resultPort.sendPort,
+        exitPort.sendPort, storeClonePtr.address, queryClonePtr.address, 20);
     await Isolate.spawn(_queryAndVisit, isolateInit);
 
     SendPort? sendPort;
@@ -950,19 +951,23 @@ class Query<T> {
     // Callback to exit the isolate once consumers or this close the stream
     // (potentially before all results have been streamed).
     var isolateExitSent = false;
-    signalIsolateExit() {
+    exitIsolate() async {
       if (isolateExitSent) return;
       isolateExitSent = true;
       // Send signal to isolate it should exit.
       sendPort?.send(null);
-      port.close();
-      // Query has finalizer attached, prevent GC until here.
-      reachabilityFence(this);
+      // Wait for isolate to clean up resources.
+      // FIXME Remove logs.
+      print('waiting for isolate to exit');
+      await exitPort.first;
+      print('isolate has exited');
+      resultPort.close();
+      exitPort.close();
     }
 
     try {
-      final streamController = StreamController<T>(onCancel: signalIsolateExit);
-      port.listen((dynamic message) {
+      final streamController = StreamController<T>(onCancel: exitIsolate);
+      resultPort.listen((dynamic message) async {
         // The first message from the spawned isolate is a SendPort. This port
         // is used to communicate with the spawned isolate.
         if (message is SendPort) {
@@ -997,13 +1002,13 @@ class Query<T> {
               'Query stream received an invalid message type '
               '(${message.runtimeType}): $message'));
         }
+        await exitIsolate();
         // Close the stream.
         streamController.close();
-        signalIsolateExit();
       });
       return streamController.stream;
     } catch (e) {
-      signalIsolateExit();
+      await exitIsolate();
       rethrow;
     }
   }
@@ -1014,11 +1019,11 @@ class Query<T> {
     final store =
         InternalStoreAccess.createMinimal(isolateInit.storePtrAddress);
 
-    var sendPort = isolateInit.sendPort;
+    var resultPort = isolateInit.resultPort;
 
     // Send a SendPort to the main isolate so that it can send to this isolate.
     final commandPort = ReceivePort();
-    sendPort.send(commandPort.sendPort);
+    resultPort.send(commandPort.sendPort);
 
     // Visit inside transaction and do not complete transaction to ensure
     // data pointers remain valid until main isolate has deserialized all data.
@@ -1038,7 +1043,7 @@ class Query<T> {
         batchSize++;
         // Send data in batches as sending a message is rather expensive.
         if (batchSize == maxBatchSize) {
-          sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
+          resultPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
           // Re-use list instance to avoid performance hit due to new instance.
           dataPtrBatch.fillRange(0, dataPtrBatch.length, 0);
           sizeBatch.fillRange(0, dataPtrBatch.length, 0);
@@ -1051,18 +1056,18 @@ class Query<T> {
       try {
         checkObx(C.query_visit(queryPtr, visitor, nullptr));
       } catch (e) {
-        sendPort.send(e);
+        resultPort.send(e);
         return;
       } finally {
         checkObx(C.query_close(queryPtr));
       }
       // Send any remaining data.
       if (batchSize > 0) {
-        sendPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
+        resultPort.send(_StreamIsolateMessage(dataPtrBatch, sizeBatch));
       }
 
       // Signal to the main isolate there are no more results.
-      sendPort.send(null);
+      resultPort.send(null);
       // Wait for main isolate to confirm it is done accessing sent data pointers.
       await commandPort.first;
       // Note: when the transaction is closed after await this might lead to an
@@ -1072,9 +1077,8 @@ class Query<T> {
     });
 
     store.close();
-
-    // Only available on Dart 2.15+
-    // Isolate.exit();
+    // Signal all native resources have been cleaned up.
+    isolateInit.exitPort.send(null);
   }
 
   /// For internal testing purposes.
@@ -1113,12 +1117,13 @@ class Query<T> {
 /// Message passed to entry point [Query._queryAndVisit] of isolate.
 @immutable
 class _StreamIsolateInit {
-  final SendPort sendPort;
+  final SendPort resultPort;
+  final SendPort exitPort;
   final int storePtrAddress;
   final int queryPtrAddress;
   final int batchSize;
 
-  const _StreamIsolateInit(this.sendPort, this.storePtrAddress,
+  const _StreamIsolateInit(this.resultPort, this.exitPort, this.storePtrAddress,
       this.queryPtrAddress, this.batchSize);
 }
 
