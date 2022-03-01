@@ -961,7 +961,7 @@ class Query<T> {
         }
         // Further messages are
         // - ObxObjectMessage for data,
-        // - String for errors and
+        // - Exception and Error for errors and
         // - null when there is no more data.
         else if (message is _StreamIsolateMessage) {
           try {
@@ -978,9 +978,10 @@ class Query<T> {
           } catch (e) {
             streamController.addError(e);
           }
-        } else if (message is String) {
-          streamController.addError(
-              ObjectBoxException('Query stream native exception: $message'));
+        } else if (message is Error) {
+          streamController.addError(message);
+        } else if (message is Exception) {
+          streamController.addError(message);
         } else if (message != null) {
           streamController.addError(ObjectBoxException(
               'Query stream received an invalid message type '
@@ -1038,10 +1039,8 @@ class Query<T> {
       });
       try {
         checkObx(C.query_visit(queryPtr, visitor, nullptr));
-      } on Exception catch (e) {
-        // FIXME Catch ObjectBoxException and ObjectBoxNativeError specifically?
-        //   Or throw in here?
-        sendPort.send(e.toString());
+      } catch (e) {
+        sendPort.send(e);
         return;
       }
       // Send any remaining data.
