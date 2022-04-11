@@ -191,6 +191,13 @@ void main() {
     Directory('store').deleteSync(recursive: true);
   });
 
+  test('store open in unicode symbol path', () async {
+    final dirName = 'Îñţérñåţîöñåļîžåţîờñ';
+    final store = Store(getObjectBoxModel(), directory: dirName);
+    store.close();
+    Directory(dirName).deleteSync(recursive: true);
+  });
+
   test('store_runInIsolatedTx', () async {
     final env = TestEnv('store');
     final id = env.box.put(TestEntity(tString: 'foo'));
