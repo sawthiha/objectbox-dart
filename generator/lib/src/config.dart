@@ -39,6 +39,7 @@ class Config {
       if (yaml != null) {
         late final String? outDirLib;
         late final String? outDirTest;
+        late final String? jsonFile, codeFile;
         final outDirYaml = yaml['output_dir'];
 
         if (outDirYaml is YamlMap) {
@@ -48,7 +49,13 @@ class Config {
           outDirLib = outDirTest = outDirYaml as String?;
         }
 
-        return Config._(outDirLib: outDirLib, outDirTest: outDirTest);
+        codeFile = yaml['code_file'];
+        jsonFile = yaml['json_file'];
+
+        return Config._(
+          jsonFile: jsonFile, codeFile: codeFile,
+          outDirLib: outDirLib, outDirTest: outDirTest,
+        );
       }
     }
     return Config._();
